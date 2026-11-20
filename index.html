@@ -34,11 +34,10 @@
     position: fixed; left: 50%; transform: translateX(-50%);
     top: calc(var(--safe-t) + var(--cardTop, 14px));
     width: min(90vw, 520px); height: var(--cardH, 34vh);
-    background: rgba(0,0,0,.52);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    background: rgba(0,0,0,.6);
     border: 1px solid rgba(255,255,255,.12);
     border-radius: 22px; overflow: hidden; touch-action: none;
-    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    z-index: 5;
   }
   #viewport {
     position: absolute; inset: 0 0 26px 0; overflow: hidden;
@@ -70,6 +69,7 @@
     bottom: calc(var(--safe-b) + 128px);
     background: var(--rec); color: #fff; font-weight: 700; font-size: 14px;
     padding: 4px 12px; border-radius: 99px; font-variant-numeric: tabular-nums;
+    z-index: 6; pointer-events: none;
   }
 
   /* Bottom controls */
@@ -78,6 +78,7 @@
     padding: 14px max(20px, env(safe-area-inset-left, 0px)) calc(var(--safe-b) + 22px) max(20px, env(safe-area-inset-right, 0px));
     display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
     background: linear-gradient(to top, rgba(0,0,0,.55), transparent);
+    z-index: 10;
   }
   .side { display: flex; gap: 10px; }
   .side.right { justify-content: flex-end; }
@@ -104,6 +105,7 @@
     bottom: calc(var(--safe-b) + 128px);
     background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     border-radius: 18px; padding: 14px 16px; display: grid; gap: 12px;
+    z-index: 11;
   }
   #tray label { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
   #tray output { text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
@@ -113,6 +115,7 @@
   #count {
     position: fixed; inset: 0; display: grid; place-items: center;
     font-size: 120px; font-weight: 800; text-shadow: 0 4px 20px rgba(0,0,0,.5); pointer-events: none;
+    z-index: 12;
   }
 
   /* Sheets */
@@ -258,17 +261,20 @@
     document.documentElement.style.setProperty("--cardTop", cardTop + "px");
     store("speed2", speed.value); store("size2", size.value); store("boxH", boxH.value);
   }
-  [speed, size, boxH].forEach(function (el) { el.addEventListener("input", applySettings); });
+  [speed, size, boxH].forEach(function (el) { el.addEventListener("input", function () { applySettings(); measure(); }); });
   applySettings();
 
   // Speed is reading pace (words per minute), so bigger text doesn't make it scroll faster than she talks.
-  function wpm() { return 100 + speed.value * 14; }
-  function pxPerSec() {
+  // Measured once, not every frame, so the phone isn't doing layout work while it records.
+  var rate = 40, maxOff = 0;
+  function measure() {
     var words = (textEl.textContent.match(/\S+/g) || []).length || 1;
     var cs = getComputedStyle(textEl);
-    var textHeight = textEl.scrollHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-    return (wpm() / 60) * (Math.max(textHeight, 1) / words);
+    var textHeight = Math.max(1, textEl.scrollHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
+    rate = ((100 + speed.value * 14) / 60) * (textHeight / words);
+    maxOff = textHeight + viewport.clientHeight * 0.05;
   }
+  function pxPerSec() { return rate; }
 
   function showErr(msg) { err.innerHTML = msg; err.hidden = false; }
 
@@ -313,11 +319,8 @@
 
   // Scrolling
   function render() { textEl.style.transform = "translateY(" + (-offset) + "px)"; }
-  function maxOffset() {
-    var cs = getComputedStyle(textEl);
-    return Math.max(0, textEl.scrollHeight - parseFloat(cs.paddingBottom) - parseFloat(cs.paddingTop) + viewport.clientHeight * 0.05);
-  }
-  function resetScroll() { offset = 0; render(); setScrolling(false); }
+  function maxOffset() { return maxOff; }
+  function resetScroll() { offset = 0; render(); measure(); setScrolling(false); }
   function setScrolling(on) {
     scrolling = on;
     $("pauseTag").hidden = on || !recording;
@@ -404,16 +407,27 @@
     setScrolling(true);
   }
 
+  var finished = false, stopFallback = null;
   function stopRec() {
-    if (!recorder || recorder.state === "inactive") return;
-    recorder.stop();
+    if (!recording) return;
+    // Stop the scroll and timer right away so the tap always feels like it worked.
+    recording = false; setScrolling(false);
+    clearInterval(timerId); $("timer").hidden = true;
+    $("recBtn").classList.remove("on"); $("recBtn").setAttribute("aria-label", "Record");
+    finished = false;
+    try { if (recorder && recorder.state !== "inactive") { recorder.requestData && recorder.requestData(); recorder.stop(); } } catch (e) {}
+    // If the phone never reports the recording as finished, show what we have anyway.
+    stopFallback = setTimeout(finishRec, 2500);
   }
 
   function finishRec() {
+    if (finished) return;
+    finished = true; clearTimeout(stopFallback);
     recording = false; setScrolling(false);
     clearInterval(timerId); $("timer").hidden = true;
     $("recBtn").classList.remove("on"); $("recBtn").setAttribute("aria-label", "Record");
     $("editBtn").hidden = false; $("trayBtn").hidden = false;
+    if (!chunks.length) { alertSheet("That take didn't save. Tap Open camera and try again."); return; }
     blob = new Blob(chunks, { type: mime.split(";")[0] });
     if (blobUrl) URL.revokeObjectURL(blobUrl);
     blobUrl = URL.createObjectURL(blob);
@@ -442,7 +456,13 @@
   function alertSheet(msg) { $("setup").hidden = false; showErr(msg); }
 
   $("startBtn").addEventListener("click", openCamera);
-  $("recBtn").addEventListener("click", function () { recording ? stopRec() : startRec(); });
+  var busy = false;
+  $("recBtn").addEventListener("click", async function () {
+    if (recording) { stopRec(); return; }
+    if (busy) return;
+    busy = true;
+    try { await startRec(); } finally { busy = false; }
+  });
   $("editBtn").addEventListener("click", function () { $("tray").hidden = true; $("setup").hidden = false; });
   $("trayBtn").addEventListener("click", function () { $("tray").hidden = !$("tray").hidden; });
   $("retakeBtn").addEventListener("click", function () { $("review").hidden = true; $("reviewVid").pause(); resetScroll(); });
