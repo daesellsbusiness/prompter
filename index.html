@@ -29,35 +29,45 @@
   /* Camera */
   #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #000; }
 
-  /* Prompter band near the lens */
+  /* Floating script card, CapCut style: centered, near the lens, drag the pill to move it */
   #prompter {
-    position: fixed; left: 0; right: 0; top: 0;
-    padding-top: calc(var(--safe-t) + 10px);
-    height: calc(var(--safe-t) + 40vh);
-    background: linear-gradient(to bottom, rgba(0,0,0,.72), rgba(0,0,0,.5) 80%, rgba(0,0,0,0));
-    overflow: hidden; touch-action: none;
+    position: fixed; left: 50%; transform: translateX(-50%);
+    top: calc(var(--safe-t) + var(--cardTop, 14px));
+    width: min(90vw, 520px); height: var(--cardH, 34vh);
+    background: rgba(0,0,0,.52);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 22px; overflow: hidden; touch-action: none;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
   }
   #viewport {
-    position: relative; height: 100%; overflow: hidden;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12%, #000 78%, transparent 100%);
-            mask-image: linear-gradient(to bottom, transparent 0, #000 12%, #000 78%, transparent 100%);
+    position: absolute; inset: 0 0 26px 0; overflow: hidden;
+    /* Bright reading zone in the upper middle, lines fade before and after it */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.32) 10%, #000 26%, #000 52%, rgba(0,0,0,.32) 78%, transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.32) 10%, #000 26%, #000 52%, rgba(0,0,0,.32) 78%, transparent 100%);
   }
   #text {
     position: absolute; left: 0; right: 0; top: 0;
-    padding: 18% max(20px, env(safe-area-inset-left, 0px)) 60vh max(20px, env(safe-area-inset-right, 0px));
-    font-size: var(--fs, 30px); line-height: 1.38; font-weight: 650; letter-spacing: -.01em;
-    white-space: pre-wrap; word-break: break-word; will-change: transform;
-    text-shadow: 0 1px 3px rgba(0,0,0,.6);
+    padding: 0 22px;
+    padding-top: calc(var(--cardH, 34vh) * .27);
+    padding-bottom: var(--cardH, 34vh);
+    font-size: var(--fs, 26px); line-height: 1.5; font-weight: 650; letter-spacing: -.005em;
+    text-align: center; white-space: pre-wrap; word-break: break-word; will-change: transform;
   }
+  #handle {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+    display: grid; place-items: center; cursor: grab; touch-action: none;
+  }
+  #handle::before { content: ""; width: 44px; height: 5px; border-radius: 99px; background: rgba(255,255,255,.45); }
   #pauseTag {
-    position: absolute; right: 14px; bottom: 10px; font-size: 12px; font-weight: 600;
-    background: var(--glass); padding: 5px 10px; border-radius: 99px; color: var(--dim);
+    position: absolute; left: 50%; transform: translateX(-50%); bottom: 30px; font-size: 12px; font-weight: 600;
+    background: rgba(0,0,0,.6); padding: 5px 12px; border-radius: 99px; color: var(--dim); white-space: nowrap;
   }
 
   /* Timer */
   #timer {
     position: fixed; left: 50%; transform: translateX(-50%);
-    top: calc(var(--safe-t) + 40vh + 8px);
+    bottom: calc(var(--safe-b) + 128px);
     background: var(--rec); color: #fff; font-weight: 700; font-size: 14px;
     padding: 4px 12px; border-radius: 99px; font-variant-numeric: tabular-nums;
   }
@@ -145,14 +155,16 @@
 <div id="prompter" hidden>
   <div id="viewport"><div id="text"></div></div>
   <div id="pauseTag" hidden>Paused · tap to resume</div>
+  <div id="handle" aria-label="Drag to move the script"></div>
 </div>
 
 <div id="timer" hidden>0:00</div>
 <div id="count" hidden></div>
 
 <div id="tray" hidden>
-  <label for="speed">Speed <input id="speed" type="range" min="1" max="10" step="1" value="3"><output id="speedOut">3</output></label>
-  <label for="size">Text size <input id="size" type="range" min="20" max="48" step="2" value="30"><output id="sizeOut">30</output></label>
+  <label for="speed">Speed <input id="speed" type="range" min="1" max="10" step="1" value="5"><output id="speedOut">5</output></label>
+  <label for="size">Text size <input id="size" type="range" min="18" max="40" step="2" value="26"><output id="sizeOut">26</output></label>
+  <label for="boxH">Box size <input id="boxH" type="range" min="22" max="60" step="2" value="34"><output id="boxHOut">34</output></label>
 </div>
 
 <div id="controls" hidden>
@@ -169,7 +181,7 @@
 <div class="sheet" id="setup">
   <div class="card">
     <h1>Teleprompter</h1>
-    <p>Paste your script, then open the camera. The words scroll at the top of the screen, right under the camera, so you look like you're talking to the viewer.</p>
+    <p>Paste your script, then open the camera. The script floats near the top, right under the camera, so you look like you're talking to the viewer. Read the bright lines in the middle of the box.</p>
     <label for="script" class="note">Your script</label>
     <textarea id="script" placeholder="Paste the script here…"></textarea>
     <div class="row">
@@ -183,6 +195,7 @@
       <li>Hold the phone at eye level, about an arm's length away.</li>
       <li>Face a window for the best light.</li>
       <li>Tap the words to pause or resume. Drag them to scroll by hand.</li>
+      <li>Drag the little bar under the script to move the box. <b>Speed</b> changes how fast it scrolls.</li>
       <li>It doesn't have to be word for word. Natural beats perfect.</li>
     </ul>
     <p class="err" id="err" hidden></p>
@@ -196,10 +209,10 @@
     <video id="reviewVid" playsinline controls></video>
     <div class="row">
       <button class="btn" id="retakeBtn" type="button">Retake</button>
-      <button class="btn primary" id="saveBtn" type="button">Save video</button>
+      <button class="btn primary" id="saveBtn" type="button">Save or send</button>
     </div>
     <a class="btn small" id="dlLink" hidden>Download video</a>
-    <p class="note" id="saveNote">On iPhone, tap <b>Save video</b>, then <b>Save Video</b> in the share menu to put it in your camera roll.</p>
+    <p class="note" id="saveNote">Tap <b>Save or send</b>. Pick <b>Save Video</b> to keep it in your camera roll, or send it straight from the menu. For full quality, send it by <b>Mail</b>, <b>AirDrop</b> or <b>Google Drive</b>. Texting it makes it blurry.</p>
   </div>
 </div>
 
@@ -235,16 +248,27 @@
   scriptBox.value = decodeHash() || load("script") || "";
 
   // Settings
-  var speed = $("speed"), size = $("size");
-  speed.value = load("speed") || 3; size.value = load("size") || 30;
+  var speed = $("speed"), size = $("size"), boxH = $("boxH");
+  speed.value = load("speed2") || 5; size.value = load("size2") || 26; boxH.value = load("boxH") || 34;
+  var cardTop = parseFloat(load("cardTop")) || 14;
   function applySettings() {
-    $("speedOut").textContent = speed.value; $("sizeOut").textContent = size.value;
+    $("speedOut").textContent = speed.value; $("sizeOut").textContent = size.value; $("boxHOut").textContent = boxH.value;
     textEl.style.setProperty("--fs", size.value + "px");
-    store("speed", speed.value); store("size", size.value);
+    document.documentElement.style.setProperty("--cardH", boxH.value + "vh");
+    document.documentElement.style.setProperty("--cardTop", cardTop + "px");
+    store("speed2", speed.value); store("size2", size.value); store("boxH", boxH.value);
   }
-  speed.addEventListener("input", applySettings); size.addEventListener("input", applySettings);
+  [speed, size, boxH].forEach(function (el) { el.addEventListener("input", applySettings); });
   applySettings();
-  function pxPerSec() { return 8 + speed.value * 9; }
+
+  // Speed is reading pace (words per minute), so bigger text doesn't make it scroll faster than she talks.
+  function wpm() { return 100 + speed.value * 14; }
+  function pxPerSec() {
+    var words = (textEl.textContent.match(/\S+/g) || []).length || 1;
+    var cs = getComputedStyle(textEl);
+    var textHeight = textEl.scrollHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    return (wpm() / 60) * (Math.max(textHeight, 1) / words);
+  }
 
   function showErr(msg) { err.innerHTML = msg; err.hidden = false; }
 
@@ -289,7 +313,10 @@
 
   // Scrolling
   function render() { textEl.style.transform = "translateY(" + (-offset) + "px)"; }
-  function maxOffset() { return Math.max(0, textEl.scrollHeight - viewport.clientHeight * 0.35); }
+  function maxOffset() {
+    var cs = getComputedStyle(textEl);
+    return Math.max(0, textEl.scrollHeight - parseFloat(cs.paddingBottom) - parseFloat(cs.paddingTop) + viewport.clientHeight * 0.05);
+  }
   function resetScroll() { offset = 0; render(); setScrolling(false); }
   function setScrolling(on) {
     scrolling = on;
@@ -304,6 +331,18 @@
   }
 
   // Tap to pause, drag to scroll by hand
+  // Drag the pill to move the whole box up or down
+  var handle = $("handle"), hY = null, hStart = 0;
+  handle.addEventListener("pointerdown", function (e) { e.stopPropagation(); hY = e.clientY; hStart = cardTop; handle.setPointerCapture(e.pointerId); });
+  handle.addEventListener("pointermove", function (e) {
+    if (hY === null) return;
+    var maxTop = window.innerHeight - prompter.offsetHeight - 160;
+    cardTop = Math.max(0, Math.min(maxTop, hStart + e.clientY - hY));
+    document.documentElement.style.setProperty("--cardTop", cardTop + "px");
+  });
+  handle.addEventListener("pointerup", function (e) { e.stopPropagation(); hY = null; store("cardTop", cardTop); });
+  handle.addEventListener("pointercancel", function () { hY = null; });
+
   var dragY = null, dragStart = 0, moved = false;
   prompter.addEventListener("pointerdown", function (e) { dragY = e.clientY; dragStart = offset; moved = false; });
   prompter.addEventListener("pointermove", function (e) {
