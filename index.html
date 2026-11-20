@@ -27,7 +27,10 @@
   [hidden] { display: none !important; }
 
   /* Camera */
+  /* The raw camera plays underneath; #view is the mirrored (and optionally softened) picture she sees and records */
   #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #000; }
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .chip.on span.ico { background: #fff; color: #000; }
 
   /* Floating script card, CapCut style: centered, near the lens, drag the pill to move it */
   #prompter {
@@ -154,6 +157,7 @@
 <body>
 
 <video id="cam" autoplay playsinline muted></video>
+<canvas id="view"></canvas>
 
 <div id="prompter" hidden>
   <div id="viewport"><div id="text"></div></div>
@@ -173,6 +177,7 @@
 <div id="controls" hidden>
   <div class="side">
     <button class="chip" id="editBtn" type="button"><span class="ico">✎</span>Script</button>
+    <button class="chip" id="softBtn" type="button" aria-pressed="false"><span class="ico">✦</span>Soft</button>
   </div>
   <button id="recBtn" type="button" aria-label="Record"><i></i></button>
   <div class="side right">
@@ -379,35 +384,62 @@
     });
   }
 
-  // The saved video should match what she saw on screen (selfie mirror), like the TikTok camera.
-  // The camera feed itself is unmirrored, so we redraw each frame flipped onto a canvas and record that.
-  var mirrorCanvas = null, mirrorOn = false;
-  function mirroredStream() {
+  // What she sees is what gets saved: every camera frame is drawn onto the #view canvas
+  // (mirrored like a selfie camera, softened when Soft is on) and the recording is taken from that canvas.
+  var view = $("view"), vctx = null, blurC = document.createElement("canvas"), bctx = blurC.getContext("2d");
+  var drawing = false, soft = load("soft") === "1", mirrorTrack = null;
+  function startDrawing() {
+    if (drawing || !cam.videoWidth) return;
     var w = cam.videoWidth, h = cam.videoHeight;
-    var c = document.createElement("canvas");
-    if (!w || !h || !c.captureStream) return null;
-    c.width = w; c.height = h;
-    var ctx = c.getContext("2d");
-    ctx.setTransform(-1, 0, 0, 1, w, 0);
-    mirrorCanvas = c; mirrorOn = true;
+    view.width = w; view.height = h;
+    vctx = view.getContext("2d");
+    vctx.setTransform(-1, 0, 0, 1, w, 0);
+    // A small copy scaled back up acts as a cheap blur for the soft-skin glow.
+    blurC.width = Math.max(1, Math.round(w / 7)); blurC.height = Math.max(1, Math.round(h / 7));
+    bctx.imageSmoothingEnabled = true; bctx.imageSmoothingQuality = "high";
+    drawing = true;
     var draw = function () {
-      if (!mirrorOn) return;
-      ctx.drawImage(cam, 0, 0, w, h);
+      if (!drawing) return;
+      vctx.globalAlpha = 1; vctx.globalCompositeOperation = "source-over";
+      vctx.drawImage(cam, 0, 0, w, h);
+      if (soft) {
+        bctx.drawImage(cam, 0, 0, blurC.width, blurC.height);
+        vctx.imageSmoothingEnabled = true; vctx.imageSmoothingQuality = "high";
+        vctx.globalAlpha = 0.38;
+        vctx.drawImage(blurC, 0, 0, w, h);
+        // Slight warm lift so skin looks even and bright, not washed out.
+        vctx.globalCompositeOperation = "screen";
+        vctx.globalAlpha = 0.06;
+        vctx.fillStyle = "#ffe9df";
+        vctx.fillRect(0, 0, w, h);
+      }
       if (cam.requestVideoFrameCallback) cam.requestVideoFrameCallback(draw);
       else requestAnimationFrame(draw);
     };
     draw();
-    var out = c.captureStream(30);
+  }
+  cam.addEventListener("playing", startDrawing);
+  cam.addEventListener("loadedmetadata", startDrawing);
+
+  function mirroredStream() {
+    if (!drawing || !view.captureStream) return null;
+    var out = view.captureStream(30);
     mirrorTrack = out.getVideoTracks()[0] || null;
     stream.getAudioTracks().forEach(function (t) { out.addTrack(t); });
     return out;
   }
-  var mirrorTrack = null;
   function stopMirror() {
-    mirrorOn = false; mirrorCanvas = null;
-    // Only the canvas video track: the mic track belongs to the live camera stream and must keep running.
+    // Only the canvas recording track: the mic track belongs to the live camera stream and must keep running.
     if (mirrorTrack) { mirrorTrack.stop(); mirrorTrack = null; }
   }
+
+  function paintSoft() {
+    var b = $("softBtn");
+    b.classList.toggle("on", soft);
+    b.setAttribute("aria-pressed", soft ? "true" : "false");
+  }
+  $("softBtn").addEventListener("click", function () { soft = !soft; store("soft", soft ? "1" : "0"); paintSoft(); });
+  paintSoft();
 
   function fmt(ms) { var s = Math.floor(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
 
@@ -432,7 +464,7 @@
     recording = true;
     $("recBtn").disabled = false;
     $("recBtn").classList.add("on"); $("recBtn").setAttribute("aria-label", "Stop");
-    $("editBtn").hidden = true; $("trayBtn").hidden = true;
+    $("editBtn").hidden = true; $("trayBtn").hidden = true; $("softBtn").hidden = true;
     startedAt = Date.now(); $("timer").textContent = "0:00"; $("timer").hidden = false;
     timerId = setInterval(function () { $("timer").textContent = fmt(Date.now() - startedAt); }, 250);
     setScrolling(true);
@@ -457,7 +489,7 @@
     recording = false; setScrolling(false);
     clearInterval(timerId); $("timer").hidden = true;
     $("recBtn").classList.remove("on"); $("recBtn").setAttribute("aria-label", "Record");
-    $("editBtn").hidden = false; $("trayBtn").hidden = false;
+    $("editBtn").hidden = false; $("trayBtn").hidden = false; $("softBtn").hidden = false;
     if (!chunks.length) { alertSheet("That take didn't save. Tap Open camera and try again."); return; }
     blob = new Blob(chunks, { type: mime.split(";")[0] });
     if (blobUrl) URL.revokeObjectURL(blobUrl);
