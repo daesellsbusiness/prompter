@@ -379,6 +379,36 @@
     });
   }
 
+  // The saved video should match what she saw on screen (selfie mirror), like the TikTok camera.
+  // The camera feed itself is unmirrored, so we redraw each frame flipped onto a canvas and record that.
+  var mirrorCanvas = null, mirrorOn = false;
+  function mirroredStream() {
+    var w = cam.videoWidth, h = cam.videoHeight;
+    var c = document.createElement("canvas");
+    if (!w || !h || !c.captureStream) return null;
+    c.width = w; c.height = h;
+    var ctx = c.getContext("2d");
+    ctx.setTransform(-1, 0, 0, 1, w, 0);
+    mirrorCanvas = c; mirrorOn = true;
+    var draw = function () {
+      if (!mirrorOn) return;
+      ctx.drawImage(cam, 0, 0, w, h);
+      if (cam.requestVideoFrameCallback) cam.requestVideoFrameCallback(draw);
+      else requestAnimationFrame(draw);
+    };
+    draw();
+    var out = c.captureStream(30);
+    mirrorTrack = out.getVideoTracks()[0] || null;
+    stream.getAudioTracks().forEach(function (t) { out.addTrack(t); });
+    return out;
+  }
+  var mirrorTrack = null;
+  function stopMirror() {
+    mirrorOn = false; mirrorCanvas = null;
+    // Only the canvas video track: the mic track belongs to the live camera stream and must keep running.
+    if (mirrorTrack) { mirrorTrack.stop(); mirrorTrack = null; }
+  }
+
   function fmt(ms) { var s = Math.floor(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
 
   async function startRec() {
@@ -389,10 +419,11 @@
     resetScroll();
     await countdown(3);
     chunks = [];
+    var recStream = mirroredStream() || stream;
     try {
-      recorder = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8000000 } : undefined);
+      recorder = new MediaRecorder(recStream, mime ? { mimeType: mime, videoBitsPerSecond: 8000000 } : undefined);
     } catch (e) {
-      recorder = new MediaRecorder(stream);
+      recorder = new MediaRecorder(recStream);
     }
     mime = recorder.mimeType || mime || "video/mp4";
     recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
@@ -422,7 +453,7 @@
 
   function finishRec() {
     if (finished) return;
-    finished = true; clearTimeout(stopFallback);
+    finished = true; clearTimeout(stopFallback); stopMirror();
     recording = false; setScrolling(false);
     clearInterval(timerId); $("timer").hidden = true;
     $("recBtn").classList.remove("on"); $("recBtn").setAttribute("aria-label", "Record");
