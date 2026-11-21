@@ -485,10 +485,9 @@
     var cw = Math.round(w * sc / 2) * 2, ch = Math.round(h * sc / 2) * 2;
     view.width = cw; view.height = ch;
     if (!setupGL(w, h, cw, ch)) {
-      // No GPU path: still mirror the picture, just without Soft.
-      ctx2d = view.getContext("2d");
-      ctx2d.setTransform(-1, 0, 0, 1, cw, 0);
-      $("softBtn").hidden = true; soft = false;
+      // No GPU: HD camera recording only, no Soft.
+      $("softBtn").hidden = true; soft = false; paintSoft();
+      return;
     }
     drawing = true;
     // Soft only works inside a fixed oval where a face sits in a selfie (centered, upper-middle),
@@ -498,17 +497,21 @@
       gl.uniform4f(glU.face, 0.5, 0.6, 0.42, 0.29);
       gl.uniform1f(glU.useFace, 1.0);
     }
+    loopSoft();
+  }
+  // The filter only runs while Soft is on. With Soft off the phone shows and records the camera directly (HD mode).
+  var looping = false;
+  function loopSoft() {
+    view.hidden = !soft;
+    if (!drawing || !soft || looping) return;
+    looping = true;
     var draw = function () {
-      if (!drawing) return;
-      if (gl) {
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cam);
-        var s = +softAmt.value;
-        gl.uniform1f(glU.amt, soft ? 0.55 + s * 0.045 : 0.0);
-        gl.uniform1f(glU.rng, 150 - s * 11);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      } else {
-        ctx2d.drawImage(cam, 0, 0, cw, ch);
-      }
+      if (!drawing || !soft) { looping = false; return; }
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cam);
+      var s = +softAmt.value;
+      gl.uniform1f(glU.amt, 0.55 + s * 0.045);
+      gl.uniform1f(glU.rng, 150 - s * 11);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       if (cam.requestVideoFrameCallback) cam.requestVideoFrameCallback(draw);
       else requestAnimationFrame(draw);
     };
@@ -518,7 +521,7 @@
   cam.addEventListener("loadedmetadata", startDrawing);
 
   function mirroredStream() {
-    if (!drawing || !view.captureStream) return null;
+    if (!soft || !drawing || !view.captureStream) return null;
     var out = view.captureStream(30);
     mirrorTrack = out.getVideoTracks()[0] || null;
     stream.getAudioTracks().forEach(function (t) { out.addTrack(t); });
@@ -534,7 +537,7 @@
     b.classList.toggle("on", soft);
     b.setAttribute("aria-pressed", soft ? "true" : "false");
   }
-  $("softBtn").addEventListener("click", function () { soft = !soft; store("soft", soft ? "1" : "0"); paintSoft(); });
+  $("softBtn").addEventListener("click", function () { soft = !soft; store("soft", soft ? "1" : "0"); paintSoft(); loopSoft(); });
   paintSoft();
 
   function fmt(ms) { var s = Math.floor(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
@@ -547,9 +550,11 @@
     resetScroll();
     await countdown(3);
     chunks = [];
-    var recStream = mirroredStream() || stream;
+    var softStream = mirroredStream();
+    var recStream = softStream || stream;
+    var bps = softStream ? 6000000 : 12000000;
     try {
-      recorder = new MediaRecorder(recStream, mime ? { mimeType: mime, videoBitsPerSecond: 6000000 } : undefined);
+      recorder = new MediaRecorder(recStream, mime ? { mimeType: mime, videoBitsPerSecond: bps } : undefined);
     } catch (e) {
       recorder = new MediaRecorder(recStream);
     }
