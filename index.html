@@ -486,53 +486,17 @@
       $("softBtn").hidden = true; soft = false;
     }
     drawing = true;
-    // Face tracking (loaded by the module script below). Until it loads, or if it can't, Soft falls back to skin color alone.
-    // It runs on its own timer, 6 times a second, on a tiny copy of the frame, so it never holds up the video.
-    // Each video frame just glides the soft area toward the last face position, so it follows smoothly.
-    var fBox = null, fGoal = null, fSeen = 0, fSeenGoal = 0;
-    var tiny = document.createElement("canvas"), tctx = tiny.getContext("2d");
-    tiny.width = 192; tiny.height = Math.max(1, Math.round(192 * h / w));
-    function detectFace() {
-      var det = window.__faceDetector;
-      if (!det || !soft || !drawing || document.hidden) return;
-      var res;
-      try {
-        tctx.drawImage(cam, 0, 0, tiny.width, tiny.height);
-        res = det.detectForVideo(tiny, performance.now());
-      } catch (e) { return; }
-      var d = res && res.detections && res.detections[0];
-      if (d && d.boundingBox) {
-        var b = d.boundingBox, tw = tiny.width, th = tiny.height;
-        // Texture coords: x as in the camera frame, y flipped (0 = bottom). Stretch up a bit to cover the forehead.
-        fGoal = {
-          cx: (b.originX + b.width / 2) / tw,
-          cy: 1 - (b.originY + b.height * 0.42) / th,
-          rx: (b.width / tw) * 0.62,
-          ry: (b.height / th) * 0.78
-        };
-        if (!fBox) fBox = { cx: fGoal.cx, cy: fGoal.cy, rx: fGoal.rx, ry: fGoal.ry };
-        fSeenGoal = 1;
-      } else {
-        fSeenGoal = 0;
-      }
-    }
-    setInterval(detectFace, 166);
-    function glideFace() {
-      if (fGoal && fBox) for (var k in fGoal) fBox[k] += (fGoal[k] - fBox[k]) * 0.3;
-      fSeen += (fSeenGoal - fSeen) * 0.15;
+    // Soft only works inside a fixed oval where a face sits in a selfie (centered, upper-middle),
+    // and inside that only on skin. No face tracking: that cost too much and made the video choppy.
+    // Texture coords: y is flipped (0 = bottom), so 0.6 is 40% down from the top.
+    if (gl) {
+      gl.uniform4f(glU.face, 0.5, 0.6, 0.42, 0.29);
+      gl.uniform1f(glU.useFace, 1.0);
     }
     var draw = function () {
       if (!drawing) return;
       if (gl) {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cam);
-        glideFace();
-        if (window.__faceDetector) {
-          var fb = fBox || { cx: 0.5, cy: 0.5, rx: 0, ry: 0 };
-          gl.uniform4f(glU.face, fb.cx, fb.cy, fb.rx * fSeen, fb.ry * fSeen);
-          gl.uniform1f(glU.useFace, 1.0);
-        } else {
-          gl.uniform1f(glU.useFace, 0.0);
-        }
         gl.uniform1f(glU.amt, soft ? 0.72 : 0.0);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       } else {
@@ -666,23 +630,6 @@
     note.hidden = false;
   });
 })();
-</script>
-<script type="module">
-  // Face tracker for the Soft filter: Google's small on-device face detector (no video leaves the phone).
-  // If it fails to load, Soft still works on skin color alone.
-  try {
-    const V = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
-    const { FaceDetector, FilesetResolver } = await import(V + "/vision_bundle.mjs");
-    const files = await FilesetResolver.forVisionTasks(V + "/wasm");
-    window.__faceDetector = await FaceDetector.createFromOptions(files, {
-      baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
-        delegate: "CPU"
-      },
-      runningMode: "VIDEO",
-      minDetectionConfidence: 0.5
-    });
-  } catch (e) { /* skin-color fallback */ }
 </script>
 </body>
 </html>
