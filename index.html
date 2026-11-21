@@ -171,6 +171,7 @@
 <div id="tray" hidden>
   <label for="speed">Speed <input id="speed" type="range" min="1" max="10" step="1" value="5"><output id="speedOut">5</output></label>
   <label for="size">Text size <input id="size" type="range" min="18" max="40" step="2" value="26"><output id="sizeOut">26</output></label>
+  <label for="softAmt">Soft <input id="softAmt" type="range" min="1" max="10" step="1" value="6"><output id="softAmtOut">6</output></label>
   <label for="boxH">Box size <input id="boxH" type="range" min="22" max="60" step="2" value="34"><output id="boxHOut">34</output></label>
 </div>
 
@@ -256,17 +257,17 @@
   scriptBox.value = decodeHash() || load("script") || "";
 
   // Settings
-  var speed = $("speed"), size = $("size"), boxH = $("boxH");
-  speed.value = load("speed2") || 5; size.value = load("size2") || 26; boxH.value = load("boxH") || 34;
+  var speed = $("speed"), size = $("size"), boxH = $("boxH"), softAmt = $("softAmt");
+  speed.value = load("speed2") || 5; size.value = load("size2") || 26; boxH.value = load("boxH") || 34; softAmt.value = load("softAmt") || 6;
   var cardTop = parseFloat(load("cardTop")) || 14;
   function applySettings() {
-    $("speedOut").textContent = speed.value; $("sizeOut").textContent = size.value; $("boxHOut").textContent = boxH.value;
+    $("speedOut").textContent = speed.value; $("sizeOut").textContent = size.value; $("boxHOut").textContent = boxH.value; $("softAmtOut").textContent = softAmt.value;
     textEl.style.setProperty("--fs", size.value + "px");
     document.documentElement.style.setProperty("--cardH", boxH.value + "vh");
     document.documentElement.style.setProperty("--cardTop", cardTop + "px");
-    store("speed2", speed.value); store("size2", size.value); store("boxH", boxH.value);
+    store("speed2", speed.value); store("size2", size.value); store("boxH", boxH.value); store("softAmt", softAmt.value);
   }
-  [speed, size, boxH].forEach(function (el) { el.addEventListener("input", function () { applySettings(); measure(); }); });
+  [speed, size, boxH, softAmt].forEach(function (el) { el.addEventListener("input", function () { applySettings(); measure(); }); });
   applySettings();
 
   // Speed is reading pace (words per minute), so bigger text doesn't make it scroll faster than she talks.
@@ -397,7 +398,7 @@
     "precision mediump float;",
     "#endif",
     "varying vec2 v;",
-    "uniform sampler2D t; uniform vec2 px; uniform float amt; uniform float rad;",
+    "uniform sampler2D t; uniform vec2 px; uniform float amt; uniform float rad; uniform float rng;",
     "uniform vec4 face; uniform float useFace;", // face ellipse in texture coords: center xy, radius zw
     "void main(){",
     "  vec2 uv = vec2(1.0 - v.x, v.y);", // selfie mirror
@@ -406,8 +407,8 @@
     "  float y  = dot(c, vec3(0.299, 0.587, 0.114));",
     "  float cb = 0.5 + dot(c, vec3(-0.168736, -0.331264, 0.5));",
     "  float cr = 0.5 + dot(c, vec3(0.5, -0.418688, -0.081312));",
-    "  float skin = smoothstep(0.27, 0.31, cb) * (1.0 - smoothstep(0.49, 0.53, cb))",
-    "             * smoothstep(0.51, 0.545, cr) * (1.0 - smoothstep(0.66, 0.70, cr))",
+    "  float skin = smoothstep(0.25, 0.30, cb) * (1.0 - smoothstep(0.51, 0.56, cb))",
+    "             * smoothstep(0.50, 0.535, cr) * (1.0 - smoothstep(0.69, 0.74, cr))",
     "             * smoothstep(0.10, 0.22, y);",
     "  vec2 fd = (uv - face.xy) / max(face.zw, vec2(0.001));",
     "  float inFace = 1.0 - smoothstep(0.72, 1.0, dot(fd, fd));",
@@ -420,11 +421,11 @@
     "    float a = fi < 8.0 ? fi * 0.785398 : (fi - 8.0) * 1.570796 + 0.785398;",
     "    vec3 s = texture2D(t, uv + vec2(cos(a), sin(a)) * ring * rad * px).rgb;",
     "    vec3 d = s - c;",
-    "    float w = exp(-dot(d, d) * 130.0) * (fi < 8.0 ? 1.0 : 0.7);",
+    "    float w = exp(-dot(d, d) * rng) * (fi < 8.0 ? 1.0 : 0.7);",
     "    sum += s * w; ws += w;",
     "  }",
     "  vec3 o = mix(c, sum / ws, amt * skin);",
-    "  o += vec3(0.022, 0.016, 0.010) * skin * amt;", // slight warm glow on skin only
+    "  o += vec3(0.03, 0.022, 0.014) * skin * amt;", // slight warm glow on skin only
     "  gl_FragColor = vec4(o, 1.0);",
     "}"
   ].join("\n");
@@ -465,11 +466,12 @@
       glU.px = gl.getUniformLocation(prog, "px");
       glU.amt = gl.getUniformLocation(prog, "amt");
       glU.rad = gl.getUniformLocation(prog, "rad");
+      glU.rng = gl.getUniformLocation(prog, "rng");
       glU.face = gl.getUniformLocation(prog, "face");
       glU.useFace = gl.getUniformLocation(prog, "useFace");
       gl.uniform1i(gl.getUniformLocation(prog, "t"), 0);
       gl.uniform2f(glU.px, 1 / w, 1 / h);
-      gl.uniform1f(glU.rad, Math.max(2, Math.max(w, h) / 380));
+      gl.uniform1f(glU.rad, Math.max(3, Math.max(w, h) / 300));
       gl.viewport(0, 0, w, h);
       return true;
     } catch (e) { gl = null; return false; }
@@ -497,7 +499,9 @@
       if (!drawing) return;
       if (gl) {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cam);
-        gl.uniform1f(glU.amt, soft ? 0.72 : 0.0);
+        var s = +softAmt.value;
+        gl.uniform1f(glU.amt, soft ? 0.55 + s * 0.045 : 0.0);
+        gl.uniform1f(glU.rng, 150 - s * 11);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       } else {
         ctx2d.drawImage(cam, 0, 0, w, h);
