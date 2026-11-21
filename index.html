@@ -414,10 +414,10 @@
     "  skin *= mix(1.0, inFace, useFace);",
     "  if (skin < 0.01) { gl_FragColor = vec4(c, 1.0); return; }",
     "  vec3 sum = c; float ws = 1.0;",
-    "  for (int i = 0; i < 16; i++) {",
+    "  for (int i = 0; i < 12; i++) {",
     "    float fi = float(i);",
     "    float ring = fi < 8.0 ? 1.0 : 2.1;",
-    "    float a = fi * 0.785398 + (fi < 8.0 ? 0.0 : 0.392699);",
+    "    float a = fi < 8.0 ? fi * 0.785398 : (fi - 8.0) * 1.570796 + 0.785398;",
     "    vec3 s = texture2D(t, uv + vec2(cos(a), sin(a)) * ring * rad * px).rgb;",
     "    vec3 d = s - c;",
     "    float w = exp(-dot(d, d) * 130.0) * (fi < 8.0 ? 1.0 : 0.7);",
@@ -487,36 +487,45 @@
     }
     drawing = true;
     // Face tracking (loaded by the module script below). Until it loads, or if it can't, Soft falls back to skin color alone.
-    // Box is smoothed between frames so the soft area doesn't jitter; it fades out when no face is found.
-    var fBox = null, fSeen = 0, frameN = 0;
-    function trackFace() {
+    // It runs on its own timer, 6 times a second, on a tiny copy of the frame, so it never holds up the video.
+    // Each video frame just glides the soft area toward the last face position, so it follows smoothly.
+    var fBox = null, fGoal = null, fSeen = 0, fSeenGoal = 0;
+    var tiny = document.createElement("canvas"), tctx = tiny.getContext("2d");
+    tiny.width = 192; tiny.height = Math.max(1, Math.round(192 * h / w));
+    function detectFace() {
       var det = window.__faceDetector;
-      if (!det || !soft) return;
-      if (frameN++ % 3) return;
+      if (!det || !soft || !drawing || document.hidden) return;
       var res;
-      try { res = det.detectForVideo(cam, performance.now()); } catch (e) { return; }
+      try {
+        tctx.drawImage(cam, 0, 0, tiny.width, tiny.height);
+        res = det.detectForVideo(tiny, performance.now());
+      } catch (e) { return; }
       var d = res && res.detections && res.detections[0];
       if (d && d.boundingBox) {
-        var b = d.boundingBox;
+        var b = d.boundingBox, tw = tiny.width, th = tiny.height;
         // Texture coords: x as in the camera frame, y flipped (0 = bottom). Stretch up a bit to cover the forehead.
-        var t = {
-          cx: (b.originX + b.width / 2) / w,
-          cy: 1 - (b.originY + b.height * 0.42) / h,
-          rx: (b.width / w) * 0.62,
-          ry: (b.height / h) * 0.78
+        fGoal = {
+          cx: (b.originX + b.width / 2) / tw,
+          cy: 1 - (b.originY + b.height * 0.42) / th,
+          rx: (b.width / tw) * 0.62,
+          ry: (b.height / th) * 0.78
         };
-        if (!fBox) fBox = t;
-        else for (var k in t) fBox[k] += (t[k] - fBox[k]) * 0.45;
-        fSeen = 1;
+        if (!fBox) fBox = { cx: fGoal.cx, cy: fGoal.cy, rx: fGoal.rx, ry: fGoal.ry };
+        fSeenGoal = 1;
       } else {
-        fSeen = Math.max(0, fSeen - 0.15);
+        fSeenGoal = 0;
       }
+    }
+    setInterval(detectFace, 166);
+    function glideFace() {
+      if (fGoal && fBox) for (var k in fGoal) fBox[k] += (fGoal[k] - fBox[k]) * 0.3;
+      fSeen += (fSeenGoal - fSeen) * 0.15;
     }
     var draw = function () {
       if (!drawing) return;
       if (gl) {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cam);
-        trackFace();
+        glideFace();
         if (window.__faceDetector) {
           var fb = fBox || { cx: 0.5, cy: 0.5, rx: 0, ry: 0 };
           gl.uniform4f(glU.face, fb.cx, fb.cy, fb.rx * fSeen, fb.ry * fSeen);
