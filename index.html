@@ -386,32 +386,107 @@
 
   // What she sees is what gets saved: every camera frame is drawn onto the #view canvas
   // (mirrored like a selfie camera, softened when Soft is on) and the recording is taken from that canvas.
-  var view = $("view"), vctx = null, blurC = document.createElement("canvas"), bctx = blurC.getContext("2d");
+  // Soft works like TikTok's Smooth: an edge-preserving smoothing that only touches skin-colored pixels.
+  // Pores and blotches (small color changes) get evened out; eyes, brows, lips, hair and the background
+  // (big color changes, or not skin-colored) stay sharp. Runs on the GPU so recording stays smooth.
+  var VERT = "attribute vec2 p; varying vec2 v; void main(){ v = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }";
+  var FRAG = [
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH",
+    "precision highp float;",
+    "#else",
+    "precision mediump float;",
+    "#endif",
+    "varying vec2 v;",
+    "uniform sampler2D t; uniform vec2 px; uniform float amt; uniform float rad;",
+    "void main(){",
+    "  vec2 uv = vec2(1.0 - v.x, v.y);", // selfie mirror
+    "  vec3 c = texture2D(t, uv).rgb;",
+    "  if (amt <= 0.0) { gl_FragColor = vec4(c, 1.0); return; }",
+    "  float y  = dot(c, vec3(0.299, 0.587, 0.114));",
+    "  float cb = 0.5 + dot(c, vec3(-0.168736, -0.331264, 0.5));",
+    "  float cr = 0.5 + dot(c, vec3(0.5, -0.418688, -0.081312));",
+    "  float skin = smoothstep(0.27, 0.31, cb) * (1.0 - smoothstep(0.49, 0.53, cb))",
+    "             * smoothstep(0.51, 0.545, cr) * (1.0 - smoothstep(0.66, 0.70, cr))",
+    "             * smoothstep(0.10, 0.22, y);",
+    "  vec3 sum = c; float ws = 1.0;",
+    "  for (int i = 0; i < 16; i++) {",
+    "    float fi = float(i);",
+    "    float ring = fi < 8.0 ? 1.0 : 2.1;",
+    "    float a = fi * 0.785398 + (fi < 8.0 ? 0.0 : 0.392699);",
+    "    vec3 s = texture2D(t, uv + vec2(cos(a), sin(a)) * ring * rad * px).rgb;",
+    "    vec3 d = s - c;",
+    "    float w = exp(-dot(d, d) * 90.0) * (fi < 8.0 ? 1.0 : 0.7);",
+    "    sum += s * w; ws += w;",
+    "  }",
+    "  vec3 o = mix(c, sum / ws, amt * skin);",
+    "  o += vec3(0.022, 0.016, 0.010) * skin * amt;", // slight warm glow on skin only
+    "  gl_FragColor = vec4(o, 1.0);",
+    "}"
+  ].join("\n");
+
+  var view = $("view"), gl = null, glTex = null, glU = {}, ctx2d = null;
   var drawing = false, soft = load("soft") === "1", mirrorTrack = null;
+
+  function setupGL(w, h) {
+    try {
+      gl = view.getContext("webgl", { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false });
+    } catch (e) { gl = null; }
+    if (!gl) return false;
+    function sh(type, src) {
+      var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    try {
+      var prog = gl.createProgram();
+      gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+      gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("link");
+      gl.useProgram(prog);
+      var buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      var loc = gl.getAttribLocation(prog, "p");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      glTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, glTex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      glU.px = gl.getUniformLocation(prog, "px");
+      glU.amt = gl.getUniformLocation(prog, "amt");
+      glU.rad = gl.getUniformLocation(prog, "rad");
+      gl.uniform1i(gl.getUniformLocation(prog, "t"), 0);
+      gl.uniform2f(glU.px, 1 / w, 1 / h);
+      gl.uniform1f(glU.rad, Math.max(2, Math.max(w, h) / 380));
+      gl.viewport(0, 0, w, h);
+      return true;
+    } catch (e) { gl = null; return false; }
+  }
+
   function startDrawing() {
     if (drawing || !cam.videoWidth) return;
     var w = cam.videoWidth, h = cam.videoHeight;
     view.width = w; view.height = h;
-    vctx = view.getContext("2d");
-    vctx.setTransform(-1, 0, 0, 1, w, 0);
-    // A small copy scaled back up acts as a cheap blur for the soft-skin glow.
-    blurC.width = Math.max(1, Math.round(w / 7)); blurC.height = Math.max(1, Math.round(h / 7));
-    bctx.imageSmoothingEnabled = true; bctx.imageSmoothingQuality = "high";
+    if (!setupGL(w, h)) {
+      // No GPU path: still mirror the picture, just without Soft.
+      ctx2d = view.getContext("2d");
+      ctx2d.setTransform(-1, 0, 0, 1, w, 0);
+      $("softBtn").hidden = true; soft = false;
+    }
     drawing = true;
     var draw = function () {
       if (!drawing) return;
-      vctx.globalAlpha = 1; vctx.globalCompositeOperation = "source-over";
-      vctx.drawImage(cam, 0, 0, w, h);
-      if (soft) {
-        bctx.drawImage(cam, 0, 0, blurC.width, blurC.height);
-        vctx.imageSmoothingEnabled = true; vctx.imageSmoothingQuality = "high";
-        vctx.globalAlpha = 0.38;
-        vctx.drawImage(blurC, 0, 0, w, h);
-        // Slight warm lift so skin looks even and bright, not washed out.
-        vctx.globalCompositeOperation = "screen";
-        vctx.globalAlpha = 0.06;
-        vctx.fillStyle = "#ffe9df";
-        vctx.fillRect(0, 0, w, h);
+      if (gl) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cam);
+        gl.uniform1f(glU.amt, soft ? 0.85 : 0.0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      } else {
+        ctx2d.drawImage(cam, 0, 0, w, h);
       }
       if (cam.requestVideoFrameCallback) cam.requestVideoFrameCallback(draw);
       else requestAnimationFrame(draw);
@@ -489,7 +564,7 @@
     recording = false; setScrolling(false);
     clearInterval(timerId); $("timer").hidden = true;
     $("recBtn").classList.remove("on"); $("recBtn").setAttribute("aria-label", "Record");
-    $("editBtn").hidden = false; $("trayBtn").hidden = false; $("softBtn").hidden = false;
+    $("editBtn").hidden = false; $("trayBtn").hidden = false; $("softBtn").hidden = !gl;
     if (!chunks.length) { alertSheet("That take didn't save. Tap Open camera and try again."); return; }
     blob = new Blob(chunks, { type: mime.split(";")[0] });
     if (blobUrl) URL.revokeObjectURL(blobUrl);
