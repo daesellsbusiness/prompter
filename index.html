@@ -254,7 +254,16 @@
     for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
-  scriptBox.value = decodeHash() || load("script") || "";
+  // Short links: ?s=1 or ?s=2 load a saved script, so the link you text is short.
+  var PRESETS = {
+    "1": "Guys, run, don't walk, because Arizen Bio Labs is running an insane BOGO deal right now! That's buy one, get one free, and you can get up to six free in one order. And honestly, this is the brand I'd send anyone to. Everything's third-party tested, the quality is amazing, and their customer service is unreal. You message them and a real person gets back to you within minutes. On top of all that, they're already one of the most affordable research companies out there, so with the BOGO it's a no-brainer. I'll link them down below so you can go check out the sale.",
+    "2": "Everyone stop what you're doing, because Arizen Bio Labs is having their biggest sale yet! It's a BOGO, so buy one, get one free, up to six free in one order. Like, are you kidding me? Everything they carry is third-party tested and the quality is top tier. Their customer service is the best I've seen, you reach out and a real person answers within minutes. And they were already one of the most affordable brands I know, so this is crazy. If you've been wanting to stock up, now is definitely the time."
+  };
+  function presetScript() {
+    try { var k = new URLSearchParams(location.search).get("s"); return k && PRESETS[k] ? PRESETS[k] : null; }
+    catch (e) { return null; }
+  }
+  scriptBox.value = presetScript() || decodeHash() || load("script") || "";
 
   // Settings
   var speed = $("speed"), size = $("size"), boxH = $("boxH"), softAmt = $("softAmt");
