@@ -519,7 +519,7 @@
 
   function mirroredStream() {
     if (!drawing || !view.captureStream) return null;
-    var out = view.captureStream();
+    var out = view.captureStream(30);
     mirrorTrack = out.getVideoTracks()[0] || null;
     stream.getAudioTracks().forEach(function (t) { out.addTrack(t); });
     return out;
