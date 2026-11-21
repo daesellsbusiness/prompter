@@ -398,6 +398,7 @@
     "#endif",
     "varying vec2 v;",
     "uniform sampler2D t; uniform vec2 px; uniform float amt; uniform float rad;",
+    "uniform vec4 face; uniform float useFace;", // face ellipse in texture coords: center xy, radius zw
     "void main(){",
     "  vec2 uv = vec2(1.0 - v.x, v.y);", // selfie mirror
     "  vec3 c = texture2D(t, uv).rgb;",
@@ -408,6 +409,10 @@
     "  float skin = smoothstep(0.27, 0.31, cb) * (1.0 - smoothstep(0.49, 0.53, cb))",
     "             * smoothstep(0.51, 0.545, cr) * (1.0 - smoothstep(0.66, 0.70, cr))",
     "             * smoothstep(0.10, 0.22, y);",
+    "  vec2 fd = (uv - face.xy) / max(face.zw, vec2(0.001));",
+    "  float inFace = 1.0 - smoothstep(0.72, 1.0, dot(fd, fd));",
+    "  skin *= mix(1.0, inFace, useFace);",
+    "  if (skin < 0.01) { gl_FragColor = vec4(c, 1.0); return; }",
     "  vec3 sum = c; float ws = 1.0;",
     "  for (int i = 0; i < 16; i++) {",
     "    float fi = float(i);",
@@ -415,7 +420,7 @@
     "    float a = fi * 0.785398 + (fi < 8.0 ? 0.0 : 0.392699);",
     "    vec3 s = texture2D(t, uv + vec2(cos(a), sin(a)) * ring * rad * px).rgb;",
     "    vec3 d = s - c;",
-    "    float w = exp(-dot(d, d) * 90.0) * (fi < 8.0 ? 1.0 : 0.7);",
+    "    float w = exp(-dot(d, d) * 130.0) * (fi < 8.0 ? 1.0 : 0.7);",
     "    sum += s * w; ws += w;",
     "  }",
     "  vec3 o = mix(c, sum / ws, amt * skin);",
@@ -460,6 +465,8 @@
       glU.px = gl.getUniformLocation(prog, "px");
       glU.amt = gl.getUniformLocation(prog, "amt");
       glU.rad = gl.getUniformLocation(prog, "rad");
+      glU.face = gl.getUniformLocation(prog, "face");
+      glU.useFace = gl.getUniformLocation(prog, "useFace");
       gl.uniform1i(gl.getUniformLocation(prog, "t"), 0);
       gl.uniform2f(glU.px, 1 / w, 1 / h);
       gl.uniform1f(glU.rad, Math.max(2, Math.max(w, h) / 380));
@@ -479,11 +486,45 @@
       $("softBtn").hidden = true; soft = false;
     }
     drawing = true;
+    // Face tracking (loaded by the module script below). Until it loads, or if it can't, Soft falls back to skin color alone.
+    // Box is smoothed between frames so the soft area doesn't jitter; it fades out when no face is found.
+    var fBox = null, fSeen = 0, frameN = 0;
+    function trackFace() {
+      var det = window.__faceDetector;
+      if (!det || !soft) return;
+      if (frameN++ % 3) return;
+      var res;
+      try { res = det.detectForVideo(cam, performance.now()); } catch (e) { return; }
+      var d = res && res.detections && res.detections[0];
+      if (d && d.boundingBox) {
+        var b = d.boundingBox;
+        // Texture coords: x as in the camera frame, y flipped (0 = bottom). Stretch up a bit to cover the forehead.
+        var t = {
+          cx: (b.originX + b.width / 2) / w,
+          cy: 1 - (b.originY + b.height * 0.42) / h,
+          rx: (b.width / w) * 0.62,
+          ry: (b.height / h) * 0.78
+        };
+        if (!fBox) fBox = t;
+        else for (var k in t) fBox[k] += (t[k] - fBox[k]) * 0.45;
+        fSeen = 1;
+      } else {
+        fSeen = Math.max(0, fSeen - 0.15);
+      }
+    }
     var draw = function () {
       if (!drawing) return;
       if (gl) {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cam);
-        gl.uniform1f(glU.amt, soft ? 0.85 : 0.0);
+        trackFace();
+        if (window.__faceDetector) {
+          var fb = fBox || { cx: 0.5, cy: 0.5, rx: 0, ry: 0 };
+          gl.uniform4f(glU.face, fb.cx, fb.cy, fb.rx * fSeen, fb.ry * fSeen);
+          gl.uniform1f(glU.useFace, 1.0);
+        } else {
+          gl.uniform1f(glU.useFace, 0.0);
+        }
+        gl.uniform1f(glU.amt, soft ? 0.72 : 0.0);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       } else {
         ctx2d.drawImage(cam, 0, 0, w, h);
@@ -616,6 +657,23 @@
     note.hidden = false;
   });
 })();
+</script>
+<script type="module">
+  // Face tracker for the Soft filter: Google's small on-device face detector (no video leaves the phone).
+  // If it fails to load, Soft still works on skin color alone.
+  try {
+    const V = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+    const { FaceDetector, FilesetResolver } = await import(V + "/vision_bundle.mjs");
+    const files = await FilesetResolver.forVisionTasks(V + "/wasm");
+    window.__faceDetector = await FaceDetector.createFromOptions(files, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+        delegate: "CPU"
+      },
+      runningMode: "VIDEO",
+      minDetectionConfidence: 0.5
+    });
+  } catch (e) { /* skin-color fallback */ }
 </script>
 </body>
 </html>
