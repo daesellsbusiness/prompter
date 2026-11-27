@@ -446,7 +446,8 @@
   ].join("\n");
 
   var view = $("view"), gl = null, glTex = null, glU = {}, ctx2d = null;
-  var drawing = false, soft = load("soft") === "1", mirrorTrack = null;
+  // Every visit starts in full-res HD; Soft (720p canvas) is opt-in per session, never remembered.
+  var drawing = false, soft = false, mirrorTrack = null;
 
   function setupGL(w, h, cw, ch) {
     try {
@@ -552,7 +553,7 @@
     b.classList.toggle("on", soft);
     b.setAttribute("aria-pressed", soft ? "true" : "false");
   }
-  $("softBtn").addEventListener("click", function () { soft = !soft; store("soft", soft ? "1" : "0"); paintSoft(); loopSoft(); });
+  $("softBtn").addEventListener("click", function () { soft = !soft; paintSoft(); loopSoft(); });
   paintSoft();
 
   function fmt(ms) { var s = Math.floor(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
